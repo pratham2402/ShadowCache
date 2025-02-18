@@ -5,6 +5,8 @@ import os
 from database import fetch_from_db, connect_to_db, close_db_connection
 from logger import logger
 from prometheus_client import start_http_server, Counter, Histogram
+from dotenv import load_dotenv
+load_dotenv() 
 
 # Metrics for cache performance
 CACHE_HITS = Counter('cache_hits', 'Total Cache Hits')

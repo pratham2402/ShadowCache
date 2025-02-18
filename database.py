@@ -2,6 +2,9 @@ import mysql.connector
 import time
 import os
 from logger import logger
+from dotenv import load_dotenv
+load_dotenv()  # Load the .env file
+
 
 # Fetch database credentials from environment variables
 DB_USER = os.getenv("MYSQL_USER", "default_user")
