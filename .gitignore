@@ -1,0 +1,37 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environment
+redis-env/
+venv/
+.env
+
+# Testing & Debugging
+*.log
+pytest_cache/
+.coverage
+*.cover
+nosetests.xml
+coverage.xml
+*.pytest_cache
+junit.xml
+
+# VSCode & IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dependencies
+*.egg-info/
+dist/
+build/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Log File
+shadowcache.log
