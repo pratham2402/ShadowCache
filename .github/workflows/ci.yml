@@ -15,6 +15,7 @@ jobs:
         image: redis
         ports:
           - 6379:6379
+
       mysql:
         image: mysql:latest
         env:
@@ -42,6 +43,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install MySQL Client
+        run: sudo apt-get update && sudo apt-get install -y mysql-client
+        shell: bash
+
       - name: Wait for MySQL to be ready
         run: |
           for i in {30..0}; do
@@ -53,5 +58,19 @@ jobs:
           done
         shell: bash
 
+      - name: Set up MySQL User
+        run: |
+          mysql -h127.0.0.1 -uroot -proot -e "
+          CREATE USER 'cache_user'@'%' IDENTIFIED BY 'Cache_user1';
+          GRANT ALL PRIVILEGES ON test_db.* TO 'cache_user'@'%';
+          FLUSH PRIVILEGES;"
+        shell: bash
+
       - name: Run tests with pytest
+        env:
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: 3306
+          MYSQL_USER: cache_user
+          MYSQL_PASSWORD: Cache_user1
+          MYSQL_DATABASE: test_db
         run: pytest tests/ --disable-warnings
