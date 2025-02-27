@@ -1,0 +1,57 @@
+name: ShadowCache CI
+
+on:
+  push:
+    branches: [ main, dev ]  # Runs on push to main or dev branch
+  pull_request:
+    branches: [ main ]       # Runs when a PR is made to main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest  # Use the latest Ubuntu as the runner
+
+    services:
+      redis:
+        image: redis
+        ports:
+          - 6379:6379
+      mysql:
+        image: mysql:latest
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: test_db
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Wait for MySQL to be ready
+        run: |
+          for i in {30..0}; do
+            if mysql -h127.0.0.1 -uroot -proot -e 'SELECT 1' &> /dev/null; then
+              break
+            fi
+            echo 'Waiting for MySQL...'
+            sleep 1
+          done
+        shell: bash
+
+      - name: Run tests with pytest
+        run: pytest tests/ --disable-warnings
