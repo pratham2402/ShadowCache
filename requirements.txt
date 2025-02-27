@@ -1,4 +1,4 @@
-redis==4.10.1
-mysql-connector-python==8.0.33
-prometheus_client==0.17.1
-python-dotenv==1.0.0
+redis
+mysql-connector-python
+prometheus_client
+python-dotenv
