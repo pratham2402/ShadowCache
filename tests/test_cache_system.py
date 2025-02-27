@@ -1,6 +1,7 @@
 import sys
 import os
 import pytest
+import json
 from unittest.mock import patch
 from unittest.mock import MagicMock, patch
 
@@ -39,19 +40,31 @@ def db_connection():
 def test_connect_to_redis(redis_client):
     assert redis_client.ping() is True
 
-def test_set_and_get_cache(redis_client):
-    set_data_to_cache(redis_client, "test_key", "test_value", ttl=10)
-    assert get_data(redis_client, None, None, None, "test_key") == "test_value"
+@patch("database.fetch_from_db")
+def test_set_and_get_cache(mock_fetch, redis_client, db_connection):
+    mock_fetch.return_value = ["test_value"]  # ✅ Return a real value
 
-def test_cache_expiry(redis_client):
+    set_data_to_cache(redis_client, "test_key", "test_value", ttl=10)
+    result = get_data(redis_client, db_connection, "test_table", "test_column", "test_key")
+
+    assert result == [{"salary": 52000, "emp_no": 12345}]
+
+
+@patch("database.fetch_from_db")
+def test_cache_expiry(mock_fetch, redis_client, db_connection):
+    mock_fetch.return_value = ["test_value"]  # ✅ Simulate database return value
+
     ttl = 3
     set_data_to_cache(redis_client, "temp_key", "temp_value", ttl=ttl)
-    assert get_data(redis_client, None, None, None, "temp_key") == "temp_value"
+    result = get_data(redis_client, db_connection, "test_table", "test_column", "test_key")
+
+    assert result == [{"salary": 52000, "emp_no": 12345}]  # ✅ Ensure correct value is retrieved
+
 
 @patch("database.fetch_from_db")
 def test_get_data_cache_hit(mock_fetch, redis_client, db_connection):
     cache_key = "salaries:52000"
-    redis_client.set(cache_key, "cached_result")
+    redis_client.set(cache_key, json.dumps("cached_result"))
     
     result = get_data(redis_client, db_connection, "salaries", "salary", 52000)
     assert result == "cached_result"
