@@ -20,8 +20,6 @@ your reads never serve stale data. No ORM required.
   automatically evict cached SELECT results for the same table.
 - **TTL safety net**. Cached entries expire after a configurable time-to-live,
   so eventual consistency is guaranteed even when SQL parsing fails.
-- **Prometheus metrics**. Optional counters for cache hits, misses, and MySQL
-  query execution time.
 - **Graceful fallback**. If Redis is unreachable, queries still execute
   against MySQL.
 
@@ -121,25 +119,6 @@ Property returning a dict with `hits`, `misses`, `total_requests`, and
 
 Close the wrapped database connection.
 
-## Prometheus Metrics
-
-Enable metrics by calling `start_metrics_server()` before executing queries:
-
-```python
-from shadowcache.metrics import start_metrics_server
-
-start_metrics_server(port=8000)
-
-# Metrics are now exposed at http://localhost:8000/metrics
-# Metrics tracked:
-#   shadowcache_cache_hits_total    -- Counter
-#   shadowcache_cache_misses_total  -- Counter
-#   shadowcache_db_query_time_seconds -- Histogram
-```
-
-An example Prometheus scrape configuration is included in
-`example_prometheus.yml`.
-
 ## Configuration With .env
 
 Copy `.env.example` to `.env` and set your credentials:
@@ -159,7 +138,7 @@ LOG_LEVEL=INFO
 
 ```bash
 # Unit tests (no Redis or MySQL needed)
-python -m pytest tests/test_parser.py tests/test_core.py tests/test_metrics.py -v
+python -m pytest tests/test_parser.py tests/test_core.py -v
 
 # Integration tests (requires Redis and MySQL)
 python -m pytest tests/ -v

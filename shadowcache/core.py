@@ -9,7 +9,6 @@ import redis
 
 from shadowcache.exceptions import CacheBackendError
 from shadowcache.logger import get_logger
-from shadowcache.metrics import record_hit, record_miss, track_db_time
 from shadowcache.parser import extract_tables, extract_write_type, is_select_query
 
 _log = get_logger(__name__)
@@ -215,12 +214,10 @@ class ShadowCache:
 
         if cached is not None:
             self._hits += 1
-            record_hit()
             _log.info("Cache HIT for key %s", cache_key)
             return None, _deserialize(cached)
 
         self._misses += 1
-        record_miss()
         _log.info("Cache MISS for key %s -- fetching from MySQL", cache_key)
 
         cursor, rows = self._handle_other(sql, params)
@@ -245,20 +242,19 @@ class ShadowCache:
 
     def _handle_other(self, sql: str, params):
         """Execute SQL directly against MySQL, returning (cursor, rows)."""
-        with track_db_time():
+        try:
+            cursor = self._db.cursor(dictionary=True)
+            if params:
+                cursor.execute(sql, params)
+            else:
+                cursor.execute(sql)
+        except Exception:
+            # Attempt to close the cursor on failure to avoid leaks.
             try:
-                cursor = self._db.cursor(dictionary=True)
-                if params:
-                    cursor.execute(sql, params)
-                else:
-                    cursor.execute(sql)
+                cursor.close()
             except Exception:
-                # Attempt to close the cursor on failure to avoid leaks.
-                try:
-                    cursor.close()
-                except Exception:
-                    pass
-                raise
+                pass
+            raise
 
         try:
             rows = cursor.fetchall()

@@ -1,6 +1,5 @@
 redis
 mysql-connector-python
-prometheus_client
 python-dotenv
 pytest
 sqlglot
