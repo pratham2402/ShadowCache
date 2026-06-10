@@ -10,7 +10,7 @@ venv/
 
 # Testing & Debugging
 *.log
-pytest_cache/
+.pytest_cache/
 .coverage
 *.cover
 nosetests.xml
