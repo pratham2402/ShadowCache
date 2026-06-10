@@ -3,86 +3,166 @@
 [![View My Profile](https://img.shields.io/badge/View-My_Profile-green?logo=GitHub)](https://github.com/pratham2402)
 [![View Repositories](https://img.shields.io/badge/View-My_Repositories-blue?logo=GitHub)](https://github.com/pratham2402?tab=repositories)
 
-[![forthebadge](https://forthebadge.com/images/badges/made-with-python.svg)](https://forthebadge.com)
-[![forthebadge](https://forthebadge.com/images/badges/powered-by-overtime.svg)](https://forthebadge.com)
-
 # ShadowCache
 
-ShadowCache is a smart caching system designed to enhance database query performance by caching frequently accessed data using Redis. When data is not found in the Redis cache, the system retrieves it from the MySQL database and stores it in the cache for future use. The project also integrates Prometheus for monitoring cache hits, misses, and MySQL query execution time.
+ShadowCache is a Python library that adds transparent Redis caching to raw MySQL
+connections. It wraps a DB-API2 connection and caches SELECT results automatically.
+When you run an INSERT, UPDATE, or DELETE, it evicts the affected cache entries so
+your reads never serve stale data. No ORM required.
 
 ## Features
 
-- **Redis Cache**: Uses Redis to cache database queries and improves retrieval speed.
-- **MySQL Database**: Retrieves data from a MySQL database when the cache miss occurs.
-- **Prometheus Integration**: Exposes metrics for monitoring cache hits, misses, and database query times.
-- **Logging**: Provides detailed logging for debugging and tracking cache operations.
-
-## Prerequisites
-
-- Python 3.6+
-- Docker (for Redis)
-- MySQL Database
-- Prometheus for metrics monitoring
+- **Zero-schema caching**. Works with any MySQL table, any query. No model
+  definitions needed.
+- **Write-triggered eviction**. INSERT, UPDATE, and DELETE statements
+  automatically evict cached SELECT results for the same table.
+- **TTL safety net**. Cached entries expire after a configurable time-to-live,
+  so eventual consistency is guaranteed even when SQL parsing fails.
+- **Prometheus metrics**. Optional counters for cache hits, misses, and MySQL
+  query execution time.
+- **Graceful fallback**. If Redis is unreachable, queries still execute
+  against MySQL.
 
 ## Installation
 
-1. **Clone the Repository**:
+```bash
+pip install shadowcache
+```
 
-   ```bash
-   git clone https://github.com/yourusername/ShadowCache.git
-   cd ShadowCache
+Or install from source:
 
-2. **Create a Virtual Environment (optional but recommended)**:
+```bash
+git clone https://github.com/pratham2402/ShadowCache.git
+cd ShadowCache
+pip install -r requirements.txt
+```
 
-    python3 -m venv redis-env
-    source redis-env/bin/activate  # On Windows: redis-env\Scripts\activate
+### Dependencies
 
-3. **Install dependencies.**:
+- Python 3.8+
+- Redis (local or remote)
+- MySQL database
 
-    pip install -r requirements.txt
+## Quick Start
 
-4. **Set up redis and MySQL**:
+```python
+import mysql.connector
+from shadowcache import ShadowCache
 
-    Redis: You can run Redis using Docker:
+conn = mysql.connector.connect(
+    host="localhost",
+    database="my_app",
+    user="app_user",
+    password="secret",
+)
 
-        docker run --name shadowcache-redis -p 6379:6379 -d redis
+cache = ShadowCache(conn)
 
-    MySQL: Configure your MySQL database by updating the .env file with the correct credentials.
+# First call hits MySQL, result is cached in Redis.
+cursor, rows = cache.execute("SELECT * FROM users WHERE id = %s", (42,))
+for row in rows:
+    print(row["name"])
 
-5. **Configure Prometheus.**:
+# Second call with same SQL + params returns from cache instantly.
+cursor, rows = cache.execute("SELECT * FROM users WHERE id = %s", (42,))
 
-    Ensure Prometheus is scraping the /metrics endpoint. Example configuration is included in the example_prometheus.yml file.
+# A write evicts cached SELECTs that reference the 'users' table.
+cache.execute("UPDATE users SET name = %s WHERE id = %s", ("Alice", 42))
 
-6. **Run the application**:
+# Next SELECT goes to MySQL again (cache was evicted). Fresh data.
+cursor, rows = cache.execute("SELECT * FROM users WHERE id = %s", (42,))
+```
 
-    Start the application by running:
+## API
 
-        python cache_system.py
+### `ShadowCache(db_connection, *, redis_client=None, redis_host="localhost", redis_port=6379, ttl=300, auto_invalidate=True)`
 
-    The application will prompt you to enter a table name, key column, and key value for querying the data.
+Wraps a DB-API2 connection. All parameters except `db_connection` are keyword-only.
 
-7. **Access prometheus.**:
+| Parameter | Default | Description |
+|---|---|---|
+| `db_connection` | (required) | An open DB-API2 MySQL connection |
+| `redis_client` | `None` | Pre-configured `redis.Redis` instance; created automatically if omitted |
+| `redis_host` | `"localhost"` | Redis hostname (ignored if `redis_client` is provided) |
+| `redis_port` | `6379` | Redis port (ignored if `redis_client` is provided) |
+| `ttl` | `300` | Cache TTL in seconds |
+| `auto_invalidate` | `True` | Whether writes automatically evict related cache entries |
 
-    Visit http://localhost:8000 to view the Prometheus metrics for cache performance.
+### `ShadowCache.execute(sql, params=None)`
 
-    View your Prometheus server for the cache hit/miss statistics.
+Execute a SQL statement with optional parameters. Returns `(cursor, rows)`.
 
-## Configuration
+- **SELECT**: checks Redis first. On hit returns `(None, cached_rows)`. On miss
+  executes against MySQL, stores the result in Redis, and returns
+  `(cursor, rows)`.
+- **INSERT**: executes against MySQL. Returns `(cursor, None)`. Inspect
+  `cursor.lastrowid` for the auto-generated ID.
+- **UPDATE/DELETE**: executes against MySQL. Returns `(cursor, None)`. Inspect
+  `cursor.rowcount` for the number of affected rows.
+- **DDL and other statements**: forwarded to MySQL without caching.
 
-    Redis: Set the Redis host and port in the .env file.
+### `ShadowCache.invalidate_table(table_name)`
 
-    MySQL: Set the MySQL credentials and database details in the .env file.
+Manually evict all cached entries for the given table. Returns the number of
+Redis keys removed.
 
-    Logging: The application logs operations to shadowcache.log.
+### `ShadowCache.flush_cache()`
 
-## Example Usage
+Remove all ShadowCache keys from Redis. Returns the number of keys removed.
 
-Once the app is running, you'll be prompted to input:
+### `ShadowCache.stats`
 
-    Table name: For example, salaries.
+Property returning a dict with `hits`, `misses`, `total_requests`, and
+`hit_ratio`.
 
-    Key column name: For example, salary.
-    
-    Key value: For example, 52000.
+### `ShadowCache.close()`
 
-After entering the details, the application will check the Redis cache. If the data is not found, it will fetch it from the MySQL database and cache it for future queries.
+Close the wrapped database connection.
+
+## Prometheus Metrics
+
+Enable metrics by calling `start_metrics_server()` before executing queries:
+
+```python
+from shadowcache.metrics import start_metrics_server
+
+start_metrics_server(port=8000)
+
+# Metrics are now exposed at http://localhost:8000/metrics
+# Metrics tracked:
+#   shadowcache_cache_hits_total    -- Counter
+#   shadowcache_cache_misses_total  -- Counter
+#   shadowcache_db_query_time_seconds -- Histogram
+```
+
+An example Prometheus scrape configuration is included in
+`example_prometheus.yml`.
+
+## Configuration With .env
+
+Copy `.env.example` to `.env` and set your credentials:
+
+```
+REDIS_HOST=localhost
+REDIS_PORT=6379
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=your_db_user
+MYSQL_PASSWORD=your_db_password
+MYSQL_DATABASE=your_database
+LOG_LEVEL=INFO
+```
+
+## Running Tests
+
+```bash
+# Unit tests (no Redis or MySQL needed)
+python -m pytest tests/test_parser.py tests/test_core.py tests/test_metrics.py -v
+
+# Integration tests (requires Redis and MySQL)
+python -m pytest tests/ -v
+```
+
+## License
+
+MIT
