@@ -5,6 +5,8 @@
 
 # ShadowCache
 
+![ShadowCache Banner](./README%20Banner%20Art.png)
+
 ShadowCache is a Python library that adds transparent Redis caching to raw MySQL
 connections. It wraps a DB-API2 connection and caches SELECT results automatically.
 When you run an INSERT, UPDATE, or DELETE, it evicts the affected cache entries so
