@@ -6,14 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "shadowcache"
 version = "0.1.0"
 description = "Transparent Redis caching for raw SQL connections - no ORM required"
-readme = "README.md"
-license = {file = "LICENSE"}
-description-content-type = "text/markdown"
+readme = {file = "README.md", content-type = "text/markdown"}
+license = "MIT"
+authors = [{name = "Pratham Bhosale"}]
 requires-python = ">=3.8"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
@@ -28,6 +27,10 @@ dependencies = [
     "mysql-connector-python>=8.0",
     "sqlglot>=20.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/pratham2402/ShadowCache"
+Repository = "https://github.com/pratham2402/ShadowCache"
 
 [project.optional-dependencies]
 dev = [

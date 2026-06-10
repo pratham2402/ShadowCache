@@ -1,4 +1,4 @@
-redis
-mysql-connector-python
-pytest
-sqlglot
+redis>=4.0
+mysql-connector-python>=8.0
+sqlglot>=20.0
+pytest>=7.0

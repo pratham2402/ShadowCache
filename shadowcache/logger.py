@@ -17,9 +17,9 @@ _loggers: dict[str, logging.Logger] = {}
 def get_logger(name: str = "ShadowCache") -> logging.Logger:
     """Return a configured logger for the given name.
 
-    The logger writes to both the console and 'shadowcache.log'. Log
-    level is read from the LOG_LEVEL environment variable and defaults
-    to INFO.
+    Log level is read from the LOG_LEVEL environment variable and defaults
+    to INFO.  A StreamHandler writing to stderr is attached on the first
+    call for each *name*.
     """
     if name in _loggers:
         return _loggers[name]

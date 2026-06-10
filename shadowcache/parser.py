@@ -13,12 +13,9 @@ from shadowcache.logger import get_logger
 
 _log = get_logger(__name__)
 
-_WRITE_TYPES = frozenset({exp.Insert, exp.Update, exp.Delete})
-
 _READ_TYPES = frozenset({
     exp.Select,
     exp.Describe,
-    exp.Show,
 })
 
 
@@ -47,7 +44,11 @@ def extract_tables(sql: str) -> Set[str]:
     tables: Set[str] = set()
     for table_node in root.find_all(exp.Table):
         name = table_node.name
-        if name:
+        if not name:
+            continue
+        if table_node.db:
+            tables.add(f"{table_node.db}.{name}")
+        else:
             tables.add(name)
     return tables
 

@@ -43,16 +43,16 @@ def cache(mock_db, mock_redis):
 
 class TestBuildCacheKey:
     def test_same_sql_same_key(self):
-        assert _build_cache_key("SELECT 1", None) == _build_cache_key("SELECT 1", None)
+        assert _build_cache_key("shadowcache", "SELECT 1", None) == _build_cache_key("shadowcache", "SELECT 1", None)
 
     def test_params_change_key(self):
-        a = _build_cache_key("SELECT * FROM t WHERE x = %s", ("a",))
-        b = _build_cache_key("SELECT * FROM t WHERE x = %s", ("b",))
+        a = _build_cache_key("shadowcache", "SELECT * FROM t WHERE x = %s", ("a",))
+        b = _build_cache_key("shadowcache", "SELECT * FROM t WHERE x = %s", ("b",))
         assert a != b
 
     def test_whitespace_changes_key(self):
-        a = _build_cache_key("SELECT 1", None)
-        b = _build_cache_key("  SELECT 1", None)
+        a = _build_cache_key("shadowcache", "SELECT 1", None)
+        b = _build_cache_key("shadowcache", "  SELECT 1", None)
         assert a != b
 
 

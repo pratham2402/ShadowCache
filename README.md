@@ -140,6 +140,7 @@ ShadowCache(
     redis_port=6379,
     ttl=300,
     auto_invalidate=True,
+    key_prefix="shadowcache",
 )
 ```
 
@@ -151,6 +152,7 @@ ShadowCache(
 | `redis_port` | `6379` | Redis port |
 | `ttl` | `300` | Cache TTL in seconds |
 | `auto_invalidate` | `True` | Whether writes automatically evict related cache entries |
+| `key_prefix` | `"shadowcache"` | Namespace prefix for all Redis keys |
 
 ### `ShadowCache.execute(sql, params=None)`
 
@@ -169,7 +171,7 @@ Returns `(cursor, rows)`.
 |---|---|
 | `invalidate_table(name)` | Evict all cached entries for a table. Returns count of keys removed. |
 | `flush_cache()` | Remove all ShadowCache keys from Redis. Returns count of keys removed. |
-| `stats` | Property. Returns `{"hits", "misses", "total_requests", "hit_ratio"}`. |
+| `stats` | Property. Returns a dict with keys `hits`, `misses`, `total_requests`, `hit_ratio`. |
 | `close()` | Close the wrapped database connection. |
 
 ## Configuration

@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import redis
@@ -13,20 +12,28 @@ from shadowcache.parser import extract_tables, extract_write_type, is_select_que
 
 _log = get_logger(__name__)
 
-_KEY_PREFIX = "shadowcache"
-_INDEX_PREFIX = f"{_KEY_PREFIX}:index"
+_DEFAULT_KEY_PREFIX = "shadowcache"
 
 # Sentinel for JSON values that cannot be serialized directly.
 _SENTINEL_BYTES = "__shadowcache_bytes__"
 
 
-def _build_cache_key(sql: str, params: Optional[tuple]) -> str:
+def _param_repr(value: Any) -> str:
+    """Produce a type-aware string representation of a parameter value.
+
+    Prefixes the value with its Python type name so that ``1`` (int) and
+    ``"1"`` (str) produce different cache keys.
+    """
+    return f"{type(value).__name__}:{value}"
+
+
+def _build_cache_key(prefix: str, sql: str, params: Optional[tuple]) -> str:
     """Produce a deterministic cache key from a SQL string and its parameters."""
     raw = sql
     if params:
-        raw += "|" + "|".join(str(p) for p in params)
+        raw += "|" + "|".join(_param_repr(p) for p in params)
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-    return f"{_KEY_PREFIX}:{digest}"
+    return f"{prefix}:{digest}"
 
 
 def _serialize(rows: List[Dict[str, Any]]) -> str:
@@ -85,7 +92,7 @@ class ShadowCache:
         redis_port: int = 6379,
         ttl: int = 300,
         auto_invalidate: bool = True,
-        key_prefix: str = _KEY_PREFIX,
+        key_prefix: str = _DEFAULT_KEY_PREFIX,
     ):
         self._db = db_connection
         self._ttl = ttl
@@ -203,7 +210,7 @@ class ShadowCache:
     # --------------------------------------------------------------- internals
 
     def _handle_select(self, sql: str, params):
-        cache_key = _build_cache_key(sql, params)
+        cache_key = _build_cache_key(self._key_prefix, sql, params)
 
         # Try Redis first.
         try:
@@ -235,7 +242,7 @@ class ShadowCache:
         if self._auto_invalidate:
             tables = extract_tables(sql)
             for table in tables:
-                self._evict_table(table)
+                self.invalidate_table(table)
             _log.debug("%s executed, tables evicted: %s", write_type, tables)
 
         return cursor, None
@@ -249,7 +256,6 @@ class ShadowCache:
             else:
                 cursor.execute(sql)
         except Exception:
-            # Attempt to close the cursor on failure to avoid leaks.
             try:
                 cursor.close()
             except Exception:
@@ -259,14 +265,11 @@ class ShadowCache:
         try:
             rows = cursor.fetchall()
         except Exception:
-            # Not all statements produce rows (DDL, SET, etc.).
             rows = None
 
         return cursor, rows
 
     def _store_result(self, cache_key: str, rows, tables: set):
-        """Serialise *rows* into Redis and register the key in per-table
-        index sets so writes can evict it later."""
         try:
             payload = _serialize(rows)
             self._redis.set(cache_key, payload, ex=self._ttl)
@@ -278,12 +281,6 @@ class ShadowCache:
             index_key = f"{self._index_prefix}:{table}"
             try:
                 self._redis.sadd(index_key, cache_key)
-                # Re-align the TTL of the index set with the cached key so
-                # orphaned sets do not accumulate forever.
                 self._redis.expire(index_key, self._ttl)
             except redis.RedisError as exc:
                 _log.debug("Failed to update index for table %r: %s", table, exc)
-
-    def _evict_table(self, table_name: str):
-        """Remove all cached entries for *table_name*."""
-        self.invalidate_table(table_name)
