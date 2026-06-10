@@ -1,7 +1,9 @@
 """Core ShadowCache class -- transparent Redis caching for raw SQL connections."""
 
+import datetime
 import hashlib
 import json
+from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 import redis
@@ -14,8 +16,12 @@ _log = get_logger(__name__)
 
 _DEFAULT_KEY_PREFIX = "shadowcache"
 
-# Sentinel for JSON values that cannot be serialized directly.
-_SENTINEL_BYTES = "__shadowcache_bytes__"
+# Sentinel keys for type-tagged JSON serialization.
+# Each non-native value is encoded as a 3-element list:
+#   ["__sc__", "<type_name>", "<payload>"]
+# A list is used because it is far less likely to appear as a real column
+# value than a dict with particular keys.
+_SC_SENTINEL = "__sc__"
 
 
 def _param_repr(value: Any) -> str:
@@ -37,25 +43,60 @@ def _build_cache_key(prefix: str, sql: str, params: Optional[tuple]) -> str:
 
 
 def _serialize(rows: List[Dict[str, Any]]) -> str:
-    """JSON-serialise rows, handling bytes columns."""
+    """JSON-serialise rows, handling non-native types via sentinel lists.
+
+    Supported types: bytes, datetime, date, time, timedelta, Decimal.
+    Each is encoded as ``["__sc__", "<type>", "<payload>"]``.
+    """
 
     def _default(obj: Any) -> Any:
         if isinstance(obj, bytes):
-            return {_SENTINEL_BYTES: obj.hex()}
+            return [_SC_SENTINEL, "bytes", obj.hex()]
+        if isinstance(obj, datetime.datetime):
+            return [_SC_SENTINEL, "datetime", obj.isoformat()]
+        if isinstance(obj, datetime.date):
+            return [_SC_SENTINEL, "date", obj.isoformat()]
+        if isinstance(obj, datetime.time):
+            return [_SC_SENTINEL, "time", obj.isoformat()]
+        if isinstance(obj, datetime.timedelta):
+            return [_SC_SENTINEL, "timedelta", obj.total_seconds()]
+        if isinstance(obj, Decimal):
+            return [_SC_SENTINEL, "Decimal", str(obj)]
         raise TypeError(f"Unsupported type: {type(obj)}")
 
     return json.dumps(rows, default=_default)
 
 
 def _deserialize(payload: str) -> List[Dict[str, Any]]:
-    """Deserialise rows, restoring bytes columns."""
+    """Deserialise rows, restoring non-native types from sentinel lists.
 
-    def _revive(obj: Any) -> Any:
-        if isinstance(obj, dict) and _SENTINEL_BYTES in obj:
-            return bytes.fromhex(obj[_SENTINEL_BYTES])
+    Recursively walks the decoded JSON tree.  Any three-element list whose
+    first element is ``_SC_SENTINEL`` is converted back to its native type;
+    all other values pass through unchanged.
+    """
+
+    def _walk(obj: Any) -> Any:
+        if isinstance(obj, list):
+            if len(obj) == 3 and obj and obj[0] == _SC_SENTINEL:
+                _, t, d = obj
+                if t == "bytes":
+                    return bytes.fromhex(d)
+                if t == "datetime":
+                    return datetime.datetime.fromisoformat(d)
+                if t == "date":
+                    return datetime.date.fromisoformat(d)
+                if t == "time":
+                    return datetime.time.fromisoformat(d)
+                if t == "timedelta":
+                    return datetime.timedelta(seconds=d)
+                if t == "Decimal":
+                    return Decimal(d)
+            return [_walk(item) for item in obj]
+        if isinstance(obj, dict):
+            return {k: _walk(v) for k, v in obj.items()}
         return obj
 
-    return json.loads(payload, object_hook=_revive)
+    return _walk(json.loads(payload))
 
 
 class ShadowCache:
@@ -220,9 +261,18 @@ class ShadowCache:
             cached = None
 
         if cached is not None:
-            self._hits += 1
-            _log.info("Cache HIT for key %s", cache_key)
-            return None, _deserialize(cached)
+            try:
+                rows = _deserialize(cached)
+            except Exception as exc:
+                _log.warning(
+                    "Cache deserialisation failed for key %r, falling through to MySQL: %s",
+                    cache_key,
+                    exc,
+                )
+            else:
+                self._hits += 1
+                _log.info("Cache HIT for key %s", cache_key)
+                return None, rows
 
         self._misses += 1
         _log.info("Cache MISS for key %s -- fetching from MySQL", cache_key)
@@ -248,9 +298,16 @@ class ShadowCache:
         return cursor, None
 
     def _handle_other(self, sql: str, params):
-        """Execute SQL directly against MySQL, returning (cursor, rows)."""
+        """Execute SQL directly against MySQL, returning (cursor, rows).
+
+        Rows are normalised to ``list[dict]`` regardless of whether the
+        underlying driver returns tuples or dicts.  The conversion uses
+        ``cursor.description`` (standard DB-API2) so the wrapper works
+        with ``mysql-connector-python``, ``pymysql``, and other PEP 249
+        drivers.
+        """
         try:
-            cursor = self._db.cursor(dictionary=True)
+            cursor = self._db.cursor()
             if params:
                 cursor.execute(sql, params)
             else:
@@ -263,15 +320,32 @@ class ShadowCache:
             raise
 
         try:
-            rows = cursor.fetchall()
+            raw_rows = cursor.fetchall()
         except Exception:
-            rows = None
+            raw_rows = None
+
+        if raw_rows and cursor.description:
+            first_row = raw_rows[0]
+            if isinstance(first_row, dict):
+                rows = raw_rows
+            else:
+                columns = [col[0] for col in cursor.description]
+                rows = [dict(zip(columns, row)) for row in raw_rows]
+        elif raw_rows is not None:
+            rows = []  # empty result set
+        else:
+            rows = None  # fetchall failed on a non-result-set statement
 
         return cursor, rows
 
     def _store_result(self, cache_key: str, rows, tables: set):
         try:
             payload = _serialize(rows)
+        except Exception as exc:
+            _log.warning("Failed to serialise result for key %r: %s", cache_key, exc)
+            return
+
+        try:
             self._redis.set(cache_key, payload, ex=self._ttl)
         except redis.RedisError as exc:
             _log.warning("Failed to store cache key %r: %s", cache_key, exc)

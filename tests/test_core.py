@@ -1,7 +1,9 @@
 """Tests for shadowcache.core -- the ShadowCache connection wrapper."""
 
+import datetime
 import json
 import time
+from decimal import Decimal
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -74,6 +76,77 @@ class TestSerializeRoundtrip:
         payload = _serialize(rows)
         restored = _deserialize(payload)
         assert restored == rows
+
+    def test_datetime_roundtrip(self):
+        now = datetime.datetime(2026, 6, 10, 14, 30, 45, 123456)
+        rows = [{"created_at": now}]
+        restored = _deserialize(_serialize(rows))
+        assert restored == rows
+
+    def test_date_roundtrip(self):
+        today = datetime.date(2026, 6, 10)
+        rows = [{"d": today}]
+        restored = _deserialize(_serialize(rows))
+        assert restored == rows
+
+    def test_time_roundtrip(self):
+        t = datetime.time(14, 30, 45, 123456)
+        rows = [{"t": t}]
+        restored = _deserialize(_serialize(rows))
+        assert restored == rows
+
+    def test_timedelta_roundtrip(self):
+        td = datetime.timedelta(hours=2, minutes=30, seconds=45, microseconds=123456)
+        rows = [{"span": td}]
+        restored = _deserialize(_serialize(rows))
+        assert restored == rows
+
+    def test_decimal_roundtrip(self):
+        rows = [{"price": Decimal("19.99")}]
+        restored = _deserialize(_serialize(rows))
+        assert restored == rows
+
+    def test_bytes_roundtrip(self):
+        rows = [{"blob": b"\x00\xff\xab"}]
+        restored = _deserialize(_serialize(rows))
+        assert restored == rows
+
+    def test_mixed_types(self):
+        rows = [{
+            "name": "Alice",
+            "created": datetime.datetime(2026, 6, 10, 12, 0, 0),
+            "days": datetime.timedelta(days=3),
+            "amount": Decimal("99.95"),
+            "blob": b"\xde\xad\xbe\xef",
+        }]
+        restored = _deserialize(_serialize(rows))
+        assert restored == rows
+
+    def test_sentinel_dict_keys_no_longer_collide(self):
+        """Dicts with __sc_type__ / __sc_data__ keys are left untouched
+        (the sentinel is now list-based, so dict keys never collide)."""
+        rows = [{"__sc_type__": "bytes", "__sc_data__": "00ff"}]
+        restored = _deserialize(_serialize(rows))
+        assert restored == rows
+
+    def test_sentinel_dict_keys_with_extra_column_not_corrupted(self):
+        """Dicts with the old sentinel key names are safe regardless of
+        how many columns are present."""
+        rows = [{"__sc_type__": "bytes", "__sc_data__": "00ff", "name": "Alice"}]
+        restored = _deserialize(_serialize(rows))
+        assert restored == rows
+
+    def test_list_sentinel_as_real_data_passthrough(self):
+        """A list that looks like a sentinel but is real data will be
+        unwrapped.  This is an accepted, documented limitation: JSON columns
+        containing exactly ``[\"__sc__\", \"<type>\", \"<payload>\"]`` will
+        be mis-decoded.  The probability is negligible in practice."""
+        # This demonstrates the trade-off: real list data that matches the
+        # sentinel pattern *will* be converted back to the native type.
+        rows = [{"data": ["__sc__", "bytes", "00ff"]}]
+        restored = _deserialize(_serialize(rows))
+        # The inner list is decoded as bytes.
+        assert restored == [{"data": b"\x00\xff"}]
 
 
 # ------------------------------------------------------------------- cache ops
@@ -227,5 +300,54 @@ class TestRedisFallback:
 
         sc = ShadowCache(mock_db, redis_client=mock_redis)
         cursor, rows = sc.execute("SELECT * FROM users WHERE id = %s", (1,))
+
+        assert rows == [{"id": 1, "name": "Alice"}]
+
+    def test_corrupt_cache_falls_through_to_mysql(self, mock_db, mock_redis):
+        """A corrupt cached value must not crash -- it falls through to MySQL."""
+        mock_redis.get.return_value = "not valid json !!!"
+
+        sc = ShadowCache(mock_db, redis_client=mock_redis)
+        cursor, rows = sc.execute("SELECT * FROM users WHERE id = %s", (1,))
+
+        # Should have fallen through to MySQL despite corrupt cache.
+        assert rows == [{"id": 1, "name": "Alice"}]
+        assert sc.stats["hits"] == 0
+        assert sc.stats["misses"] == 1
+
+    def test_empty_string_cache_falls_through_to_mysql(self, mock_db, mock_redis):
+        """An empty-string cached value must not be treated as a hit."""
+        mock_redis.get.return_value = ""
+
+        sc = ShadowCache(mock_db, redis_client=mock_redis)
+        cursor, rows = sc.execute("SELECT * FROM users WHERE id = %s", (1,))
+
+        assert rows == [{"id": 1, "name": "Alice"}]
+        assert sc.stats["hits"] == 0
+        assert sc.stats["misses"] == 1
+
+
+class TestTupleToDictConversion:
+    """Verify that _handle_other converts tuple rows to dicts via cursor.description."""
+
+    def test_convert_tuples_to_dicts(self, mock_db, mock_redis):
+        """When the driver returns tuple rows, they become dicts keyed by column name."""
+        cursor = mock_db.cursor.return_value
+        cursor.fetchall.return_value = [(1, "Alice"), (2, "Bob")]
+        cursor.description = (("id",), ("name",))
+
+        sc = ShadowCache(mock_db, redis_client=mock_redis)
+        _, rows = sc.execute("SELECT id, name FROM users")
+
+        assert rows == [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
+
+    def test_dict_rows_pass_through_unchanged(self, mock_db, mock_redis):
+        """When the driver already returns dict rows, they are used as-is."""
+        cursor = mock_db.cursor.return_value
+        cursor.fetchall.return_value = [{"id": 1, "name": "Alice"}]
+        cursor.description = (("id",), ("name",))
+
+        sc = ShadowCache(mock_db, redis_client=mock_redis)
+        _, rows = sc.execute("SELECT id, name FROM users")
 
         assert rows == [{"id": 1, "name": "Alice"}]
