@@ -3,25 +3,81 @@
 [![View My Profile](https://img.shields.io/badge/View-My_Profile-green?logo=GitHub)](https://github.com/pratham2402)
 [![View Repositories](https://img.shields.io/badge/View-My_Repositories-blue?logo=GitHub)](https://github.com/pratham2402?tab=repositories)
 
+![Python](https://img.shields.io/badge/python-3.8+-blue?logo=python)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Platform](https://img.shields.io/badge/platform-mysql%20%7C%20redis-red)
+
 # ShadowCache
 
 ![ShadowCache Banner](./README%20Banner%20Art.png)
 
-ShadowCache is a Python library that adds transparent Redis caching to raw MySQL
-connections. It wraps a DB-API2 connection and caches SELECT results automatically.
-When you run an INSERT, UPDATE, or DELETE, it evicts the affected cache entries so
-your reads never serve stale data. No ORM required.
+**Write SQL. Get caching. Nothing else.**
+
+ShadowCache wraps your MySQL connection and transparently caches SELECT results
+in Redis. INSERT, UPDATE, or DELETE statements automatically evict affected cache
+entries so your reads never serve stale data. No ORM. No boilerplate. No config.
+
+---
+
+## Table of Contents
+
+- [The problem](#the-problem)
+- [Features](#features)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [API reference](#api-reference)
+- [Configuration](#configuration)
+- [Running tests](#running-tests)
+- [License](#license)
+
+---
+
+## The problem
+
+Every developer who writes raw SQL eventually writes this:
+
+```python
+# 8 lines of boilerplate for every cached query
+cache_key = f"user:{user_id}"
+cached = redis.get(cache_key)
+if cached:
+    return json.loads(cached)
+
+cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+row = cursor.fetchone()
+redis.set(cache_key, json.dumps(row), ex=300)
+return row
+```
+
+And on every INSERT, UPDATE, or DELETE you need to remember:
+
+```python
+cursor.execute("UPDATE users SET name = %s WHERE id = %s", (name, user_id))
+redis.delete(f"user:{user_id}")  # easy to forget, easy to get wrong
+```
+
+**With ShadowCache:**
+
+```python
+# One line. Caching and invalidation are automatic.
+cursor, rows = cache.execute("SELECT * FROM users WHERE id = %s", (42,))
+cursor, _ = cache.execute("UPDATE users SET name = %s WHERE id = %s", ("Alice", 42))
+```
+
+---
 
 ## Features
 
-- **Zero-schema caching**. Works with any MySQL table, any query. No model
+- **Zero-schema caching.** Works with any MySQL table, any query. No model
   definitions needed.
-- **Write-triggered eviction**. INSERT, UPDATE, and DELETE statements
+- **Write-triggered eviction.** INSERT, UPDATE, and DELETE statements
   automatically evict cached SELECT results for the same table.
-- **TTL safety net**. Cached entries expire after a configurable time-to-live,
+- **TTL safety net.** Cached entries expire after a configurable time-to-live,
   so eventual consistency is guaranteed even when SQL parsing fails.
-- **Graceful fallback**. If Redis is unreachable, queries still execute
+- **Graceful fallback.** If Redis is unreachable, queries still execute
   against MySQL.
+
+---
 
 ## Installation
 
@@ -37,13 +93,11 @@ cd ShadowCache
 pip install -r requirements.txt
 ```
 
-### Dependencies
+**Dependencies:** Python 3.8+, Redis, MySQL.
 
-- Python 3.8+
-- Redis (local or remote)
-- MySQL database
+---
 
-## Quick Start
+## Quick start
 
 ```python
 import mysql.connector
@@ -58,68 +112,79 @@ conn = mysql.connector.connect(
 
 cache = ShadowCache(conn)
 
-# First call hits MySQL, result is cached in Redis.
+# Cold miss: hits MySQL, stores in Redis.
 cursor, rows = cache.execute("SELECT * FROM users WHERE id = %s", (42,))
 for row in rows:
     print(row["name"])
 
-# Second call with same SQL + params returns from cache instantly.
+# Warm hit: returns from Redis instantly.
 cursor, rows = cache.execute("SELECT * FROM users WHERE id = %s", (42,))
 
-# A write evicts cached SELECTs that reference the 'users' table.
+# Write evicts the cache.
 cache.execute("UPDATE users SET name = %s WHERE id = %s", ("Alice", 42))
 
-# Next SELECT goes to MySQL again (cache was evicted). Fresh data.
+# Cache was evicted: fresh data from MySQL.
 cursor, rows = cache.execute("SELECT * FROM users WHERE id = %s", (42,))
 ```
 
-## API
+---
 
-### `ShadowCache(db_connection, *, redis_client=None, redis_host="localhost", redis_port=6379, ttl=300, auto_invalidate=True)`
+## API reference
 
-Wraps a DB-API2 connection. All parameters except `db_connection` are keyword-only.
+### Constructor
+
+```python
+ShadowCache(
+    db_connection,
+    *,
+    redis_client=None,
+    redis_host="localhost",
+    redis_port=6379,
+    ttl=300,
+    auto_invalidate=True,
+)
+```
 
 | Parameter | Default | Description |
 |---|---|---|
 | `db_connection` | (required) | An open DB-API2 MySQL connection |
 | `redis_client` | `None` | Pre-configured `redis.Redis` instance; created automatically if omitted |
-| `redis_host` | `"localhost"` | Redis hostname (ignored if `redis_client` is provided) |
-| `redis_port` | `6379` | Redis port (ignored if `redis_client` is provided) |
+| `redis_host` | `"localhost"` | Redis hostname |
+| `redis_port` | `6379` | Redis port |
 | `ttl` | `300` | Cache TTL in seconds |
 | `auto_invalidate` | `True` | Whether writes automatically evict related cache entries |
 
-### `ShadowCache.execute(sql, params=None)`
+### `execute(sql, params=None)`
 
-Execute a SQL statement with optional parameters. Returns `(cursor, rows)`.
+Execute a SQL statement. Returns `(cursor, rows)`.
 
-- **SELECT**: checks Redis first. On hit returns `(None, cached_rows)`. On miss
-  executes against MySQL, stores the result in Redis, and returns
-  `(cursor, rows)`.
-- **INSERT**: executes against MySQL. Returns `(cursor, None)`. Inspect
-  `cursor.lastrowid` for the auto-generated ID.
-- **UPDATE/DELETE**: executes against MySQL. Returns `(cursor, None)`. Inspect
-  `cursor.rowcount` for the number of affected rows.
-- **DDL and other statements**: forwarded to MySQL without caching.
+| SQL type | Behaviour |
+|---|---|
+| `SELECT` | Checks Redis first. Hit: returns `(None, cached_rows)`. Miss: executes on MySQL, caches result, returns `(cursor, rows)`. |
+| `INSERT` | Executes on MySQL. Returns `(cursor, None)`. Use `cursor.lastrowid`. |
+| `UPDATE` / `DELETE` | Executes on MySQL, evicts cache entries for affected tables. Returns `(cursor, None)`. Use `cursor.rowcount`. |
+| DDL / other | Executes on MySQL without caching or eviction. |
 
-### `ShadowCache.invalidate_table(table_name)`
+### `invalidate_table(table_name)`
 
-Manually evict all cached entries for the given table. Returns the number of
-Redis keys removed.
+Manually evict all cached entries for the given table. Returns the count of Redis
+keys removed.
 
-### `ShadowCache.flush_cache()`
+### `flush_cache()`
 
-Remove all ShadowCache keys from Redis. Returns the number of keys removed.
+Remove all ShadowCache keys from Redis. Returns the count of keys removed.
 
-### `ShadowCache.stats`
+### `stats`
 
-Property returning a dict with `hits`, `misses`, `total_requests`, and
-`hit_ratio`.
+Property returning a dict: `hits`, `misses`, `total_requests`, `hit_ratio`.
 
-### `ShadowCache.close()`
+### `close()`
 
 Close the wrapped database connection.
 
-## Configuration With .env
+---
+
+## Configuration
 
 Copy `.env.example` to `.env` and set your credentials:
 
@@ -134,15 +199,16 @@ MYSQL_DATABASE=your_database
 LOG_LEVEL=INFO
 ```
 
-## Running Tests
+---
+
+## Running tests
 
 ```bash
-# Unit tests (no Redis or MySQL needed)
-python -m pytest tests/test_parser.py tests/test_core.py -v
-
-# Integration tests (requires Redis and MySQL)
+# Unit tests (no Redis or MySQL needed -- all mocks)
 python -m pytest tests/ -v
 ```
+
+---
 
 ## License
 
