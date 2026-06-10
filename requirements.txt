@@ -1,5 +1,4 @@
 redis
 mysql-connector-python
-python-dotenv
 pytest
 sqlglot

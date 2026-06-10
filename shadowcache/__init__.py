@@ -16,7 +16,7 @@ Usage:
 
 from shadowcache.exceptions import ShadowCacheError
 
-__all__ = ["ShadowCacheError"]
+__all__ = ["ShadowCache", "ShadowCacheError"]
 __version__ = "0.1.0"
 
 
