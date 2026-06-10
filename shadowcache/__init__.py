@@ -14,8 +14,18 @@ Usage:
     cache.execute("UPDATE users SET name = %s WHERE id = %s", ("Alice", 42))
 """
 
-from shadowcache.core import ShadowCache
 from shadowcache.exceptions import ShadowCacheError
 
-__all__ = ["ShadowCache", "ShadowCacheError"]
+__all__ = ["ShadowCacheError"]
 __version__ = "0.1.0"
+
+
+def __getattr__(name):
+    """Lazily import ShadowCache so the package is usable even when
+    only a subset of modules have been installed."""
+    if name == "ShadowCache":
+        from shadowcache.core import ShadowCache as _sc
+
+        return _sc
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
