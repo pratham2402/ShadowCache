@@ -9,6 +9,7 @@ description = "Transparent Redis caching for raw SQL connections - no ORM requir
 readme = {file = "README.md", content-type = "text/markdown"}
 license = "MIT"
 authors = [{name = "Pratham Bhosale"}]
+keywords = ["redis", "mysql", "cache", "sql", "caching", "database", "db-api", "transparent-cache", "query-cache"]
 requires-python = ">=3.8"
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -39,3 +40,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["shadowcache*"]
+
+[tool.setuptools.package-data]
+shadowcache = ["py.typed"]
